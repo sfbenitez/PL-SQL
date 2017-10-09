@@ -1,0 +1,184 @@
+//Ejercicio 1
+
+create or replace procedure conductorinexistente
+(p_codcon conductores.codigo%type)
+is
+	e_conductornoexiste exception;
+	v_existe number;
+begin
+	select count(*) into v_existe
+	from conductores
+	where codigo = p_codcon;
+	if v_existe = 0 then
+		raise_application_error(-20001, 'El conductor: '||p_codcon||' no existe en la base de datos');
+	end if;
+end;
+/
+
+create or replace procedure conductorsincamionasignado
+(p_codcon conducciones.codigoconductor%type)
+is
+	e_conductorsincamion exception;
+	v_existe number;
+begin
+	select count(*) into v_existe
+	from conducciones
+	where codigoconductor = p_codcon;
+	if v_existe = 0 then
+		raise_application_error(-20002, 'El conductor: '||p_codcon||' no ha realizado ningún trayecto');
+	end if;
+end;
+/
+
+create or replace procedure camionsinremolque
+(p_codcon conducciones.codigoconductor%type)
+is
+	e_camionsinremolque exception;
+	v_existe number;
+begin
+	select count(*) into v_existe
+	from usosderemolques
+	where matriculacamion in (select matriculacamion from conducciones where codigoconductor=p_codcon) and matricularemolque in (select matricula from remolques);
+	if v_existe = 0 then
+		raise_application_error(-20003, 'El camión asignado al conductor '||p_codcon||' no tiene remolques asignados');
+	end if;
+end;
+/
+
+create or replace procedure tablaconductorvacia
+is
+	v_existe number;
+begin
+	select count(*) into v_existe
+	from conductores;
+	if v_existe = 0 then
+		raise_application_error(-20004, 'Tabla conductores vacía');
+	end if;
+end;
+/
+
+
+create or replace procedure tablacamionvacia
+is
+	v_existe number;
+begin
+	select count(*) into v_existe
+	from camiones;
+	if v_existe = 0 then
+		raise_application_error(-20005, 'Tabla camiones vacía');
+	end if;
+end;
+/
+
+create or replace procedure tablaremolquevacia
+is
+	v_existe number;
+begin
+	select count(*) into v_existe
+	from remolques;
+	if v_existe = 0 then
+		raise_application_error(-20006, 'Tabla remolques vacía');
+	end if;
+end;
+/
+
+create or replace function ultimamatricula
+(p_nombre conductores.nombre%type, p_apellidos conductores.apellidos%type)
+return number
+is
+	v_matricularemolque remolques.matricula%type;
+begin
+
+	select matricularemolque into v_matricularemolque from usosderemolques u 
+							  where (select max(fechainicio) from conducciones
+								       			 where codigoconductor = (select codigo from conductores 
+																where nombre=p_nombre and apellidos=p_apellidos) 
+																group by codigoconductor) between u.fechainicio and u.fechafin;
+	return v_matricularemolque;
+end;
+/
+
+create or replace function DevolverRemolque
+(p_nombre conductores.nombre%type, p_apellidos conductores.apellidos%type)
+return remolques.matricula%type
+is 
+	v_codcon conducciones.codigoconductor%type;
+begin
+	select codigo into v_codcon from conductores where nombre=p_nombre and apellidos=p_apellidos; 
+	conductorinexistente(v_codcon);
+	conductorsincamionasignado(v_codcon);
+	camionsinremolque(v_codcon);
+	tablaconductorvacia;
+	tablacamionvacia;
+	tablaremolquevacia;
+	return ultimamatricula(p_nombre, p_apellidos);
+
+end;
+/
+
+//Ejercicio 3
+
+create or replace trigger CargaSuperiorACapacidad
+BEFORE INSERT OR UPDATE ON lineaspedidos
+FOR EACH ROW
+DECLARE
+	v_capacidad remolques.capacidad%TYPE;
+	
+BEGIN
+	SELECT capacidad INTO v_capacidad
+	FROM remolques
+	WHERE matricula = :new.remolquematricula;
+	IF :new.volumencarga > v_capacidad then
+		RAISE_APPLICATION_ERROR(-20001,'No se puede realizar un pedido con un volúmen de carga superior a la capacidad del remolque');
+	END IF;
+END;
+/
+
+//Ejercicio 5
+
+create or replace procedure indiasacumulados
+(p_codcon conductores.codigo%type, p_fechainicio conducciones.fechainicio%type, p_fechafin conducciones.fechafin%type)
+
+is
+
+begin
+    
+	update conductores set diasdeconduccionacumulados = (diasdeconduccionacumulados + (p_fechafin - p_fechainicio))
+
+	where codigo = p_codcon;
+
+end;
+
+/
+
+create or replace procedure dediasacumulados
+(p_codcon conductores.codigo%type, p_fechainicio conducciones.fechainicio%type, p_fechafin conducciones.fechafin%type)
+
+is
+
+begin
+    
+	update conductores set diasdeconduccionacumulados = (diasdeconduccionacumulados - (p_fechafin - p_fechainicio))
+
+	where codigo = p_codcon;
+
+end;
+
+/
+
+create or replace trigger actualizardiasconduciendo
+after insert or update or delete on conducciones
+for each row
+declare
+begin
+	if updating then
+		dediasacumulados(:old.codigoconductor, :old.fechainicio, :old.fechafin);
+		indiasacumulados(:new.codigoconductor, :new.fechainicio, :new.fechafin);
+	elsif inserting then
+		indiasacumulados(:new.codigoconductor, :new.fechainicio, :new.fechafin);
+	elsif deleting then
+		dediasacumulados(:old.codigoconductor, :old.fechainicio, :old.fechafin);
+	end if;
+end;
+/
+
